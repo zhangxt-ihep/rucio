@@ -28,7 +28,7 @@ import unittest
 import uuid
 from configparser import NoOptionError, NoSectionError
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from typing import Optional
 
@@ -1850,6 +1850,110 @@ def rse_completer(prefix, parsed_args, **kwargs):
     return ["%(rse)s" % rse for rse in client.list_rses()]
 
 
+def add_load_injection_plans(args, **kwargs):
+    """
+    %(prog)s add-load-injection-plans [options] <field1=value1 field2=value2 ...>
+    Add load injection plans.
+    """
+    client = get_client(args)
+
+    plans = list()
+    if not args.csv:
+        if not args.src_rse or not args.dest_rse or not args.rate or not args.start_time or not args.end_time:
+            logger.error('"--src", "--dest", "--rate", "--start-time" and "--end-time" are mandatory, if you don\'t use "--csv".')
+            return FAILURE
+        plans.append({'src_rse': args.src_rse,
+                      'dest_rse': args.dest_rse,
+                      'rate': args.rate,
+                      'start_time': args.start_time,
+                      'end_time': args.end_time,
+                      'comments': args.comments,
+                      'interval': args.interval,
+                      'fudge': args.fudge,
+                      'max_injection': args.max_injection,
+                      'expiration_delay': args.expiration_delay,
+                      'rule-lifetime': args.rule_lifetime,
+                      'big_first': args.big_first,
+                      'dry-run': args.dry_run
+                      })
+    if args.csv:
+        keys_map = {
+            'src_rse': ['src', 'src_rse'],
+            'dest_rse': ['dest', 'dest_rse', 'des', 'des_rse', 'dst', 'dst_rse'],
+            'inject_rate': ['inject_rate', 'rate'],
+            'start_time': ['start_time', 'start'],
+            'end_time': ['end_time', 'end'],
+            'comments': ['comment', 'comments'],
+            'interval': ['interval', 'time_interval'],
+            'fudge': ['fudge', 'fudge_factor'],
+            'max_injection': ['max_injection'],
+            'expiration_delay': ['expiration_delay'],
+            'rule_lifetime': ['rule_lifetime'],
+            'big_first': ['big_first'],
+            'dry_run': ['dry_run', 'dryrun']
+            }
+        types_map = {
+            str: ['src_rse', 'dest_rse', 'start_time', 'end_time', 'comments'],
+            int: ['rate', 'interval', 'expiration_delay', 'rule_lifetime'],
+            float: ['fudge', 'max_injection'],
+            bool: ['dry_run', 'big_first']
+                     }
+
+        def get_normalized_key(original_key):
+            return original_key.lower().replace('-', '_')
+
+        def map_value_to_tpye(normalized_key, value):
+            for data_type, keys in types_map.items():
+                if normalized_key in keys:
+                    return data_type(value.strip())
+            return value
+
+        plans = list()
+        with open(args.csv, 'r') as csv_file:
+            import csv
+            csv_reader = csv.DictReader(csv_file)
+            for row in csv_reader:
+                normalized_row = dict()
+                for key, value in row.items():
+                    normalized_key = get_normalized_key(key)
+                    for standard_key, variants in keys_map.items():
+                        if normalized_key in variants:
+                            normalized_row[standard_key] = map_value_to_tpye(normalized_key, value)
+                plans.append(normalized_row)
+
+    for plan in plans:
+        for key in keys_map:
+            if key not in plan or not plan[key]:
+                plan.update({key: getattr(args, key)})
+
+    headers = ['SOURCE',
+               'DESTINATION',
+               'RATE(Mbps)',
+               'START TIME',
+               'END TIME',
+               'COMMENTS',
+               'INTERVAL(s)',
+               'FUDGE',
+               'MAX INJECTION',
+               'EXPIRATION DELAY(s)',
+               'RULE LIFETIME(s)',
+               'BIG FIRST',
+               'DRY RUN']
+    table = list()
+    for plan in plans:
+        row = list()
+        for key in keys_map:
+            row.append(plan[key])
+        table.append(row)
+
+    if not args.test:
+        client.add_load_injection_plans(plans)
+
+    print("\nPlans successfully added:")
+    print(tabulate(table, tablefmt='simple', headers=headers))
+    return SUCCESS
+
+
 def get_parser():
     """
     Returns the argparse parser.
@@ -2512,6 +2616,96 @@ can be found in ' + Color.BOLD + 'https://rucio.cern.ch/documentation/started/co
     add_lifetime_exception_parser.add_argument('--inputfile', action='store', help='File where the list of datasets requested to be extended are located.', required=True)
     add_lifetime_exception_parser.add_argument('--reason', action='store', help='The reason for the extension.', required=True)
     add_lifetime_exception_parser.add_argument('--expiration', action='store', help='The expiration date format YYYY-MM-DD', required=True)
+
+    add_load_injection_plans_parser = subparsers.add_parser('add-load-injection-plans', help='Add load injection plans',
+                                                            formatter_class=argparse.RawDescriptionHelpFormatter, epilog='''Usage example
+"""""""""""""
+::
+
+You can add your plans with parameters all in a CSV configuration file and submit it by:
+
+    $ rucio add-load-injection-plans --csv myfile.csv
+
+In CSV file, it could contain the parameters, for example:
+
+src-rse,dest-rse,rate,start-time,end-time,comment,interval,fudge,max-injection,expiration-delay,rule-lifetime,big-first,dry-run
+RSE1,RSE2,100,2024-12-02 15:00:00,2024-12-03 15:00:00,"Data Challenge!",900,0.0,0.2,1800,3600,True,False
+RSE1,RSE3,200,2024-12-03 16:00:00,2024-12-04 16:00:00,"Data Challenge second round!",900,0.1,0.2,1800,3600,False,False
+RSE2,RSE4,300,2024-12-04 17:00:00,2024-12-05 17:00:00,"Data Challenge one more time!",900,0.2,0.2,1800,3600,True,False
+RSE2,RSE5,400,2024-12-05 18:00:00,2024-12-06 18:00:00,"Data Challenge again and again!",900,0.3,0.2,1800,3600,False,False
+......
+
+You can leave some parameters empty (comment, interval, fudge, max-injection, expiration-delay, rule-lifetime, big-first, dry-run), those parameters will be filled by default value, for example:
+src-rse,dest-rse,rate,start-time,end-time,comment,interval,fudge
+RSE1,RSE2,100,2024-12-02 15:00:00,2024-12-03 15:00:00,,,
+RSE1,RSE3,200,2024-12-03 16:00:00,2024-12-04 16:00:00,"So sad I don't have more parameters",,0.1
+
+It equals to:
+src-rse,dest-rse,rate,start-time,end-time,comment,interval,fudge,max-injection,expiration-delay,rule-lifetime,big-first,dry-run
+RSE1,RSE2,100,2024-12-02 15:00:00,2024-12-03 15:00:00,"Data injection plans",900,0.0,0.2,1800,3600,False,False
+RSE1,RSE3,200,2024-12-03 16:00:00,2024-12-04 16:00:00,"So sad I don't have more parameters",900,0.1,0.2,1800,3600,False,False
+
+You can also add the plans one-by-one by parameters without a CSV configuration file:
+
+    $ rucio add-load-injection-plans --src-rse RSE1 \\
+                                     --dest-rse RSE2 \\
+                                     --rate 100 \\
+                                     --start-time "2024-12-02 15:00:00" \\
+                                     --end-time "2024-12-03 15:00:00" \\
+                                     --comment "Data Challenge!" \\
+                                     --interval 900 \\
+                                     --fudge 0 \\
+                                     --max-injection 0.2 \\
+                                     --expiration-delay 1800 \\
+                                     --rule-lifetime 3600 \\
+                                     --big-first \\
+                                     --dry-run
+
+It equlas to:
+src-rse,dest-rse,rate,start-time,end-time,comment,interval,fudge,max-injection,expiration-delay,rule-lifetime,big-first,dry-run
+RSE1,RSE2,100,2024-12-02 15:00:00,2024-12-03 15:00:00,"Data Challenge!",900,0.0,0.2,1800,3600,True,True
+
+You can also add the plans both in a CSV configuration file and parameters at the same time.
+In this case, the empty parameters in CSV configuration file will be filled by parameters, for examples:
+
+    $ cat myfile.csv
+    src-rse, dest-rse, rate, start-time, end-time
+    RSE1, RSE2, , ,
+    RSE1, RSE3, 300, ,
+    RSE2, RSE3, , 2024-12-03 16:00:00, 2024-12-04 16:00:00
+    RSE2, RSE4, 400, 2024-12-04 17:00:00, 2024-12-05 17:00:00
+
+    $ rucio add-load-injection-plans --csv myfile.csv \\
+                                     --rate 100 \\
+                                     --start-time "2024-12-02 15:00:00" \\
+                                     --end-time "2024-12-03 15:00:00" \\
+                                     --dry-run
+
+It equals to:
+src-rse,dest-rse,rate,start-time,end-time,comment,interval,fudge,max-injection,expiration-delay,rule-lifetime,big-first,dry-run
+RSE1,RSE2,100,2024-12-02 15:00:00,2024-12-03 15:00:00,"Data injection plans",900,0.0,0.2,1800,3600,False,True
+RSE1,RSE3,300,2024-12-02 15:00:00,2024-12-03 15:00:00,"Data injection plans",900,0.0,0.2,1800,3600,False,True
+RSE2,RSE3,100,2024-12-03 16:00:00,2024-12-04 16:00:00,"Data injection plans",900,0.0,0.2,1800,3600,False,True
+RSE2,RSE4,400,2024-12-04 17:00:00,2024-12-05 17:00:00,"Data injection plans",900,0.0,0.2,1800,3600,False,True
+
+    ''')
+    add_load_injection_plans_parser.set_defaults(function=add_load_injection_plans)
+    add_load_injection_plans_parser.add_argument('--csv', action='store', type=str, help='Plans configuration file in a csv file.', required=False)
+    add_load_injection_plans_parser.add_argument('--src-rse', '--src', dest='src_rse', action='store', type=str, help='Source RSE name, default is None.', required=False)
+    add_load_injection_plans_parser.add_argument('--dest-rse', '--dest', '--des', '--dst', dest='dest_rse', action='store', type=str, help='Destination RSE name, default in None.', required=False)
+    add_load_injection_plans_parser.add_argument('--rate', '--inject-rate', '--mbps', dest='inject_rate', action='store', type=int, default=200, help='Rate of the injection in Mbps, default is 200 Mbps.', required=False)
+    add_load_injection_plans_parser.add_argument('--start-time', '--start', dest='start_time', action='store', type=str, default=datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'), help='Start time of the injection in format YYYY-MM-DD HH:MM:SS, default is present time.', required=False)
+    add_load_injection_plans_parser.add_argument('--end-time', '--end', dest='end_time', action='store', type=str, default=(datetime.utcnow()+timedelta(hours=2)).strftime('%Y-%m-%d %H:%M:%S'), help='End time of the injection in format YYYY-MM-DD HH:MM:SS, default is present time + 2 hour', required=False)
+    add_load_injection_plans_parser.add_argument('--comment', '--comments', dest='comments', action='store', type=str, default="Data injection plans", help='Comments for the injection, default is "Data injection plans".', required=False)
+    add_load_injection_plans_parser.add_argument('--interval', '--time-interval', dest='interval', action='store', type=int, default=900, help='Interval of each time injection in seconds, default is 900.', required=False)
+    add_load_injection_plans_parser.add_argument('--fudge', '--fudge-factor', dest='fudge', action='store', type=float, default=0.0, help='Fudge factor for the injection, default is 0.0.', required=False)
+    add_load_injection_plans_parser.add_argument('--max-injection', action='store', type=float, default=0.2, help='Max injection rate, default is 0.2.', required=False)
+    add_load_injection_plans_parser.add_argument('--expiration-delay', action='store', type=int, default=1800, help='Expiration delay in seconds, default is 1800.', required=False)
+    add_load_injection_plans_parser.add_argument('--rule-lifetime', action='store', type=int, default=3600, help='Rule lifetime in seconds, default is 3600.', required=False)
+    add_load_injection_plans_parser.add_argument('--big-first', action='store_true', help='Big containers get injected in first.', required=False)
+    add_load_injection_plans_parser.add_argument('--dry-run', '--dryrun', dest='dry_run', action='store_true', help='Dry run, do not really add rules.', required=False)
+    add_load_injection_plans_parser.add_argument('--test', action='store_true', help='Test your plans mode if it is correct.', required=False)
+
 
     return oparser
 

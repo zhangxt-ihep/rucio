@@ -1139,3 +1139,13 @@ class PolicyPackageIsNotVersioned(PolicyPackageBaseException):
         super(PolicyPackageIsNotVersioned, self).__init__(package, *args)
         self._message = 'Policy package %s does not include information about which Rucio versions it supports.' % self.package
         self.error_code = 109
+
+
+class DuplicateLoadInjectionPlan(RucioException):
+    """
+    Duplicate load injection plan.
+    """
+    def __init__(self, *args):
+        super(DuplicateLoadInjectionPlan, self).__init__(*args)
+        self._message = 'A duplicate load injection plan, this src_rse, dest_rse pair already exists.'
+        self.error_code = 110

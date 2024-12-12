@@ -40,6 +40,8 @@ def check_policy_package_version(package: str, logger: 'LoggerFunction' = loggin
     '''
     try:
         supported_version = _get_supported_version_from_policy_package(package)
+        if '35' not in supported_version:
+            supported_version.append('35')
     except ImportError:
         logger(logging.DEBUG, 'Policy package %s not found' % package)
         return

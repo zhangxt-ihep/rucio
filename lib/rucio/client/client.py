@@ -35,6 +35,7 @@ from rucio.client.ruleclient import RuleClient
 from rucio.client.scopeclient import ScopeClient
 from rucio.client.subscriptionclient import SubscriptionClient
 from rucio.client.touchclient import TouchClient
+from rucio.client.loadinjectionclient import LoadInjectionClient
 
 
 class Client(AccountClient,
@@ -55,7 +56,8 @@ class Client(AccountClient,
              ExportClient,
              CredentialClient,
              DiracClient,
-             LifetimeClient):
+             LifetimeClient,
+             LoadInjectionClient):
 
     """Main client class for accessing Rucio resources. Handles the authentication."""
 
