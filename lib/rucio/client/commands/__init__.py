@@ -23,3 +23,4 @@ from rucio.client.commands.rule import Rule  # noqa: F401
 from rucio.client.commands.scope import Scope  # noqa: F401
 from rucio.client.commands.subscription import Subscription  # noqa: F401
 from rucio.client.commands.upload import Upload  # noqa: F401
+from rucio.client.commands.loadinjection import LoadInjection  # noqa: F401

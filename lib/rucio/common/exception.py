@@ -1177,3 +1177,24 @@ class DuplicateLoadInjectionPlan(RucioException):
         super(DuplicateLoadInjectionPlan, self).__init__(*args)
         self._message = 'A duplicate load injection plan, this src_rse, dest_rse pair already exists.'
         self.error_code = 112
+
+
+class NoLoadInjectionPlanFound(RucioException):
+    """
+    No unique datasets found.
+    """
+    def __init__(self, *args):
+        super(NoLoadInjectionPlanFound, self).__init__(*args)
+        self._message = 'No unique load injection plan found.'
+        self.error_code = 113
+
+
+class NoUniqueDatasetFound(RucioException):
+    """
+    No unique datasets found.
+    """
+    def __init__(self, *args):
+        super(NoUniqueDatasetFound, self).__init__(*args)
+        self._message = 'No unique datasets found.'
+        self.error_code = 114
+

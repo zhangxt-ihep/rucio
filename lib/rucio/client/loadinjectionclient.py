@@ -99,3 +99,58 @@ class LoadInjectionClient(BaseClient):
                 headers=r.headers, status_code=r.status_code, data=r.content
             )
             raise exc_cls(exc_msg)
+
+    def list_load_injection_plan(self) -> "Sequence[Mapping[str, Any]]":
+        """
+        List all load injection plans.
+
+        :returns: A list of dictionaries containing the load injection plans.
+        """
+        path = "/".join([self.LOADINJECTION_BASEURL])
+        url = build_url(choice(self.list_hosts), path=path)
+        r = self._send_request(url, type_="GET")
+        if r.status_code == codes.ok:
+            return r.json()
+        else:
+            exc_cls, exc_msg = self._get_exception(
+                headers=r.headers, status_code=r.status_code, data=r.content
+            )
+            raise exc_cls(exc_msg)
+
+    def info_load_injection_plan(self, plan_id: str) -> "Mapping[str, Any]":
+        """
+        Get information about a load injection plan.
+
+        :param plan_id: The ID of the load injection plan.
+
+        :returns: A dictionary containing the information about the load injection plan.
+        """
+        path = "/".join([self.LOADINJECTION_BASEURL, plan_id])
+        url = build_url(choice(self.list_hosts), path=path)
+        r = self._send_request(url, type_="GET")
+        if r.status_code == codes.ok:
+            return r.json()
+        else:
+            exc_cls, exc_msg = self._get_exception(
+                headers=r.headers, status_code=r.status_code, data=r.content
+            )
+            raise exc_cls(exc_msg)
+
+    def remove_load_injection_plan(self, plan_id: str) -> bool:
+        """
+        Remove load injection plans.
+
+        :param plan_id: The ID of the load injection plan to remove.
+
+        :returns: True if the load injection plan was removed successfully, False otherwise.
+        """
+        path = "/".join([self.LOADINJECTION_BASEURL, plan_id])
+        url = build_url(choice(self.list_hosts), path=path)
+        r = self._send_request(url, type_="DELETE")
+        if r.status_code == codes.no_content:
+            return True
+        else:
+            exc_cls, exc_msg = self._get_exception(
+                headers=r.headers, status_code=r.status_code, data=r.content
+            )
+            raise exc_cls(exc_msg)

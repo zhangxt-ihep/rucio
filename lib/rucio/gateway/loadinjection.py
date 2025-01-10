@@ -13,14 +13,14 @@
 # limitations under the License.
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 import rucio.gateway.permission
 from rucio.common.exception import AccessDenied, DuplicateLoadInjectionPlan
 from rucio.common.utils import generate_uuid
 from rucio.core import load_injection
-from rucio.core.rse import get_rse_id
-from rucio.db.sqla.session import transactional_session
+from rucio.core.rse import get_rse_id, get_rse_name
+from rucio.db.sqla.session import transactional_session, read_session
 from rucio.db.sqla.constants import LoadInjectionState
 
 if TYPE_CHECKING:
@@ -84,4 +84,83 @@ def add_load_injection_plans(
                 % (new_plan["src_rse"], new_plan["dest_rse"])
             )
 
-    return load_injection.add_injection_plans(injection_plans)
+    load_injection.add_injection_plans(injection_plans)
+
+
+@read_session
+def get_load_injection_plans(
+    issuer: str, vo: str, state: Optional[str] = None, *, session: "Session"
+) -> list[dict[str, Any]]:
+    """
+    Get load injection plans.
+
+    :param issuer: The issuer account.
+    :param vo: The VO to act on.
+    :param state: The state of the plan.
+    :param session: The database session in use.
+    """
+    kwargs = {"issuer": issuer}
+    auth_result = rucio.gateway.permission.has_permission(
+        issuer=issuer,
+        vo=vo,
+        action="get_load_injection_plans",
+        kwargs=kwargs,
+        session=session,
+    )
+    if not auth_result.allowed:
+        raise AccessDenied(
+            "Account %s can not get load injection plans. %s"
+            % (issuer, auth_result.message)
+        )
+
+    result = load_injection.get_injection_plans(state=state)
+    return _format_plans(result)
+
+
+@transactional_session
+def delete_load_injection_plans(
+    plan_ids: list[str], issuer: str, vo: str, *, session: "Session"
+) -> None:
+    """
+    Delete load injection plans.
+
+    :param plan_ids: List of plan IDs.
+    :param issuer: The issuer account.
+    :param vo: The VO to act on.
+    :param session: The database session in use.
+    """
+    kwargs = {"issuer": issuer}
+    auth_result = rucio.gateway.permission.has_permission(
+        issuer=issuer,
+        vo=vo,
+        action="delete_load_injection_plans",
+        kwargs=kwargs,
+        session=session,
+    )
+    if not auth_result.allowed:
+        raise AccessDenied(
+            "Account %s can not delete load injection plans. %s"
+            % (issuer, auth_result.message)
+        )
+
+    plans = list()
+    for plan_id in plan_ids:
+        plan = {"plan_id": plan_id}
+        plans.append(plan)
+    load_injection.delete_injection_plans(plans)
+
+
+def _format_plans(plans: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Format load injection plans to user readable format.
+
+    :param plans: List of plans.
+
+    :return: List of formatted plans.
+    """
+    for plan in plans:
+        plan["src_rse"] = get_rse_name(plan.pop("src_rse_id"))
+        plan["dest_rse"] = get_rse_name(plan.pop("dest_rse_id"))
+        plan.pop("created_at", None)
+        plan.pop("updated_at", None)
+    return plans

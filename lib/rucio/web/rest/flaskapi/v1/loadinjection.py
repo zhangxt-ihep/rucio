@@ -12,14 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from json import dumps
+
 from flask import Flask, request
 
 from rucio.common.exception import (
     AccessDenied,
     DuplicateLoadInjectionPlan,
+    NoLoadInjectionPlanFound,
 )
 
-from rucio.gateway.loadinjection import add_load_injection_plans
+from rucio.gateway.loadinjection import (
+    add_load_injection_plans,
+    get_load_injection_plans,
+    delete_load_injection_plans,
+)
+from rucio.common.utils import APIEncoder, render_json
 from rucio.web.rest.flaskapi.authenticated_bp import AuthenticatedBlueprint
 from rucio.web.rest.flaskapi.v1.common import (
     ErrorHandlingMethodView,
@@ -27,10 +35,11 @@ from rucio.web.rest.flaskapi.v1.common import (
     generate_http_error_flask,
     json_list,
     response_headers,
+    try_stream,
 )
 
 
-class BulkPlans(ErrorHandlingMethodView):
+class Plans(ErrorHandlingMethodView):
 
     @check_accept_header_wrapper_flask(["application/json"])
     def post(self):
@@ -133,18 +142,163 @@ class BulkPlans(ErrorHandlingMethodView):
             return generate_http_error_flask(406, error)
         return "Created", 201
 
+    @check_accept_header_wrapper_flask(["application/x-json-stream"])
+    def get(self, plan_id=None):
+        """
+        ---
+        summary: Get load injection plans bulk in all or in specified states
+        description: Return a list of load injection plans
+        tags:
+          - Load Injection Plans
+        parameters:
+        - name: plan_id
+          in: query
+          description: ID of the injection plan
+          schema:
+            type: string
+          required: false
+        responses:
+          200:
+            description: OK
+            content:
+              application/x-json-stream:
+                schema:
+                  description: A list of the load injection plans. Items are seperated by new line characters.
+                  type: array
+                  items:
+                    descriotion: A load injection plan.
+                    type: object
+                    properties:
+                      plan_id:
+                        description: ID of the injection plan
+                        type: string
+                      state:
+                        description: State of the injection plan
+                        type: string
+                      src_rse:
+                        description: Source RSE name
+                        type: string
+                      dest_rse:
+                        description: Destination RSE name
+                        type: string
+                      inject_rate:
+                        description: Injection rate in MB/s
+                        type: integer
+                      start_time:
+                        description: Start time of the injection plan
+                        type: string
+                      end_time:
+                        description: End time of the injection plan
+                        type: string
+                      comments:
+                        description: Comments for the injection plan
+                        type: string
+                      interval:
+                        description: Time interval between injections in seconds
+                        type: integer
+                      fudge:
+                        description: Fudge factor for the injection plan
+                        type: float
+                      max_injection:
+                        description: Maximum injection rate
+                        type: float
+                      expiration_delay:
+                        description: Expiration delay for the injection plan
+                        type: integer
+                      rule_lifetime:
+                        description: Rule lifetime for the injection plan
+                        type: integer
+                      big_first:
+                        description: Big first flag for the injection plan
+                        type: boolean
+                      dry_run:
+                        description: Dry run flag for the injection plan
+                        type: boolean
+          401:
+            description: Invalid Auth Token
+          404:
+            description: Plan not found
+          406:
+            description: Not acceptable
+        """
+        try:
+            if plan_id:
+                return render_json(
+                    **get_load_injection_plans(
+                        issuer=request.environ.get("issue"),
+                        vo=request.environ.get("vo"),
+                        plan_id=plan_id,
+                    )
+                )
+            else:
+
+                def generate(vo):
+                    for plan in get_load_injection_plans(
+                        issuer=request.environ.get("issuer"), vo=vo
+                    ):
+                        yield render_json(**plan) + "\n"
+
+                return try_stream(generate(vo=request.environ.get("vo")))
+        except AccessDenied as error:
+            return generate_http_error_flask(401, error)
+        except NoLoadInjectionPlanFound as error:
+            return generate_http_error_flask(404, error)
+        except Exception as error:
+            return generate_http_error_flask(406, error)
+
+    def delete(self, plan_id):
+        """
+        ---
+        summary: Delete load injection plans in bulk
+        description: Delete load injection plans in bulk
+        tags:
+          - Load Injection Plans
+        requestBody:
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  description: One injection plan to delete.
+                  type: object
+                  required:
+                    - plan_id
+                  properties:
+                    plan_id:
+                      description: Plan ID of the injection plan to delete.
+                      type: string
+        responses:
+          200:
+            description: OK
+          401:
+            description: Invalid Auth Token
+          404:
+            description: Not found
+        """
+        try:
+            delete_load_injection_plans(
+                plan_ids=[plan_id],
+                issuer=request.environ.get("issuer"),
+                vo=request.environ.get("vo"),
+            )
+        except AccessDenied as error:
+            return generate_http_error_flask(401, error)
+        except NoLoadInjectionPlanFound as error:
+            return generate_http_error_flask(404, error)
+        except Exception as error:
+            return generate_http_error_flask(406, error)
+        return "OK", 200
+
 
 def blueprint(with_doc: bool = False) -> AuthenticatedBlueprint:
     bp = AuthenticatedBlueprint("loadinjection", __name__, url_prefix="/loadinjection")
 
-    bulkplans_view = BulkPlans.as_view("bulkplans")
-    bp.add_url_rule(
-        "",
-        view_func=bulkplans_view,
-        methods=[
-            "post",
-        ],
-    )
+    plans_view = Plans.as_view("plans")
+    bp.add_url_rule("", view_func=plans_view, methods=["post", "get"])
+    bp.add_url_rule("/<plan_id>", view_func=plans_view, methods=["get", "delete"])
+    # bulkplans_view = Plans.as_view("Bulkplans")
+    # bp.add_url_rule("/get", view_func=bulkplans_view, method=["post"])
+    # bp.add_url_rule("/delete", view_func=bulkplans_view, method=["delete"])
 
     bp.after_request(response_headers)
     return bp
