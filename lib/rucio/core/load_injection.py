@@ -13,14 +13,14 @@
 # limitations under the License.
 
 import datetime
-import logging
 from typing import TYPE_CHECKING, Any, Optional
 
+from sqlalchemy.orm import aliased
 from sqlalchemy.sql.expression import select, and_, not_, exists, delete, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, NoResultFound, MultipleResultsFound
 
 from rucio.common import exception
-from rucio.db.sqla import models
+from rucio.db.sqla import models, constants
 from rucio.db.sqla.session import read_session, transactional_session
 
 if TYPE_CHECKING:
@@ -43,9 +43,10 @@ def scan_unique_rse_pair_datasets(
 
     # Query the dataset_locks table for unique datasets for the given RSE pair
     try:
+        datasetlock_alias = aliased(models.DatasetLock)
         stmt = select(models.DatasetLock).where(
             and_(
-                models.DatasetLock.state == "O",
+                models.DatasetLock.state == constants.LockState.OK,
                 models.DatasetLock.bytes > 0,
                 models.DatasetLock.length.between(1, 1000),
                 models.DatasetLock.bytes / models.DatasetLock.length > 100000000,
@@ -53,17 +54,17 @@ def scan_unique_rse_pair_datasets(
                 not_(
                     exists().where(
                         and_(
-                            models.DatasetLock.scope == models.DatasetLock.scope,
-                            models.DatasetLock.name == models.DatasetLock.name,
-                            models.DatasetLock.rse_id == dest_rse_id,
+                            datasetlock_alias.scope == models.DatasetLock.scope,
+                            datasetlock_alias.name == models.DatasetLock.name,
+                            datasetlock_alias.rse_id == dest_rse_id,
                         )
                     )
                 ),
             )
         )
         query_result = session.execute(stmt).scalars().all()
-    except IntegrityError as error:
-        raise exception.RucioException(error.args)
+    except NoResultFound as error:
+        raise exception.NoUniqueDatasetFound(error.args)
 
     # Convert the query result to a list of dictionaries with the required format
     result = list()
@@ -102,8 +103,8 @@ def get_unique_rse_pair_datasets(
             )
         )
         query_result = session.execute(stmt).scalars().all()
-    except IntegrityError as error:
-        raise exception.RucioException(error.args)
+    except NoResultFound as error:
+        raise exception.NoUniqueDatasetFound(error.args)
     return [dataset.to_dict() for dataset in query_result]
 
 
@@ -167,7 +168,7 @@ def add_unique_rse_pair_datasets(
             new_dataset.save(session=session, flush=False)
         session.flush()
     except IntegrityError as error:
-        raise exception.RucioException(error.args)
+        raise exception.DuplicateContent(error.args)
 
 
 @transactional_session
@@ -217,8 +218,8 @@ def delete_unique_rse_pair_datasets(
                 )
             )
             session.execute(stmt)
-    except IntegrityError as error:
-        raise exception.RucioException(error.args)
+    except NoResultFound as error:
+        raise exception.NoUniqueDatasetFound(error.args)
 
 
 @read_session
@@ -236,6 +237,7 @@ def validate_unique_rse_pair_dataset(
     :returns: True if the dataset is unique, False otherwise.
     """
     try:
+        datasetlock_alias = aliased(models.DatasetLock)
         stmt = select(models.DatasetLock).where(
             and_(
                 models.DatasetLock.scope == scope,
@@ -244,17 +246,19 @@ def validate_unique_rse_pair_dataset(
                 not_(
                     exists().where(
                         and_(
-                            models.DatasetLock.scope == scope,
-                            models.DatasetLock.name == name,
-                            models.DatasetLock.rse_id == dest_rse_id,
+                            datasetlock_alias.scope == scope,
+                            datasetlock_alias.name == name,
+                            datasetlock_alias.rse_id == dest_rse_id,
                         )
                     )
                 ),
             )
         )
-        query_result = session.execute(stmt).scalars().all()
-    except IntegrityError as error:
-        raise exception.RucioException(error.args)
+        query_result = session.execute(stmt).scalar_one()
+    except NoResultFound as error:
+        raise exception.NoUniqueDatasetFound(error.args)
+    except MultipleResultsFound as error:
+        raise exception.DuplicateContent(error.args)
     if query_result:
         return True
     else:
@@ -273,13 +277,12 @@ def get_injection_plans(
     """
     try:
         stmt = select(models.LoadInjectionPlans)
+        if state:
+            stmt = stmt.where(models.LoadInjectionPlans.state == state)
         query_result = session.execute(stmt).scalars().all()
-    except IntegrityError as error:
-        raise exception.RucioException(error.args)
-    if state:
-        return [plan.to_dict() for plan in query_result if plan.state == state]
-    else:
-        return [plan.to_dict() for plan in query_result]
+    except NoResultFound as error:
+        raise exception.NoLoadInjectionPlanFound(error.args)
+    return [plan.to_dict() for plan in query_result]
 
 
 @transactional_session
@@ -378,7 +381,7 @@ def add_injection_plans(
             new_plan.save(session=session, flush=False)
         session.flush()
     except IntegrityError as error:
-        raise exception.RucioException(error.args)
+        raise exception.DuplicateLoadInjectionPlan(error.args)
 
 
 @transactional_session
@@ -474,7 +477,7 @@ def add_injection_plans_history(
             new_plan.save(session=session, flush=False)
         session.flush()
     except IntegrityError as error:
-        raise exception.RucioException(error.args)
+        raise exception.DuplicateLoadInjectionPlan(error.args)
 
 
 @transactional_session
@@ -511,13 +514,34 @@ def delete_injection_plans(
     """
     try:
         for plan in injection_plans:
-            stmt = delete(models.LoadInjectionPlans).where(
-                models.LoadInjectionPlans.dest_rse_id == plan["dest_rse_id"],
-                models.LoadInjectionPlans.src_rse_id == plan["src_rse_id"],
-            )
+            if "dest_rse_id" in plan and "src_rse_id" in plan and not "plan_id" in plan:
+                stmt = delete(models.LoadInjectionPlans).where(
+                    and_(
+                        models.LoadInjectionPlans.dest_rse_id == plan["dest_rse_id"],
+                        models.LoadInjectionPlans.src_rse_id == plan["src_rse_id"],
+                    )
+                )
+            elif (
+                "plan_id" in plan
+                and not "dest_rse_id" in plan
+                and not "src_rse_id" in plan
+            ):
+                stmt = delete(models.LoadInjectionPlans).where(
+                    models.LoadInjectionPlans.plan_id == plan["plan_id"]
+                )
+            elif "dest_rse_id" in plan and "src_rse_id" in plan and "plan_id" in plan:
+                stmt = delete(models.LoadInjectionPlans).where(
+                    and_(
+                        models.LoadInjectionPlans.dest_rse_id == plan["dest_rse_id"],
+                        models.LoadInjectionPlans.src_rse_id == plan["src_rse_id"],
+                        models.LoadInjectionPlans.plan_id == plan["plan_id"],
+                    )
+                )
+            else:
+                raise exception.InputValidationError()
             session.execute(stmt)
-    except IntegrityError as error:
-        raise exception.RucioException(error.args)
+    except NoResultFound as error:
+        raise exception.NoLoadInjectionPlanFound(error.args)
 
 
 @transactional_session
@@ -544,8 +568,8 @@ def update_injection_plan_state(
             .values(state=new_state)
         )
         session.execute(stmt)
-    except IntegrityError as error:
-        raise exception.RucioException(error.args)
+    except NoResultFound as error:
+        raise exception.NoLoadInjectionPlanFound(error.args)
 
 
 @read_session
@@ -568,7 +592,7 @@ def get_injection_plan_state(
             )
         )
         query_result = session.execute(stmt).scalar_one_or_none()
-    except IntegrityError as error:
-        raise exception.RucioException(error.args)
+    except NoResultFound as error:
+        raise exception.NoLoadInjectionPlanFound(error.args)
 
     return query_result.to_dict()["state"] if query_result else None

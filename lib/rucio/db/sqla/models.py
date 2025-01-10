@@ -1723,18 +1723,18 @@ class FollowEvent(BASE, ModelBase):
 class LoadInjectionDatasets(BASE, ModelBase):
     """Unique datasets that exist in a specific RSE pair"""
     __tablename__ = 'unique_rse_pair_datasets'
-    scope: Mapped[InternalScope] = mapped_column(InternalScopeString(get_schema_value('SCOPE_LENGTH')))
-    name: Mapped[str] = mapped_column(String(get_schema_value('NAME_LENGTH')))
+    scope: Mapped[InternalScope] = mapped_column(InternalScopeString(common_schema.get_schema_value('SCOPE_LENGTH')))
+    name: Mapped[str] = mapped_column(String(common_schema.get_schema_value('NAME_LENGTH')))
     bytes: Mapped[Optional[int]] = mapped_column(BigInteger)
     length: Mapped[Optional[int]] = mapped_column(BigInteger)
     dest_rse_id: Mapped[uuid.UUID] = mapped_column(GUID())
     src_rse_id: Mapped[uuid.UUID] = mapped_column(GUID())
-    _table_args = (PrimaryKeyConstraint('scope', 'name', 'src_rse_id', 'dest_rse_id', name='UNIQUE_RSE_PAIR_DATASETS_PK'),
-                   ForeignKeyConstraint(['scope', 'name'], ['dids.scope', 'dids.name'], name='UNIQUE_RSE_PAIR_DATASETS_SCOPE_NAME_FK'),
-                   ForeignKeyConstraint(['src_rse_id'], ['rses.id'], name='UNIQUE_RSE_PAIR_DATASETS_SRC_RSE_FK'),
-                   ForeignKeyConstraint(['dest_rse_id'], ['rses.id'], name='UNIQUE_RSE_PAIR_DATASETS_DEST_RSE_FK'),
-                   Index('UNIQUE_RSE_PAIR_DATASETS_SRC_RSE_IDX', 'src_rse_id'),
-                   Index('UNIQUE_RSE_PAIR_DATASETS_DEST_RSE_IDX', 'dest_rse_id'))
+    _table_args = (PrimaryKeyConstraint('scope', 'name', 'src_rse_id', 'dest_rse_id', name='LOAD_INJECTION_DATASETS_PK'),
+                   ForeignKeyConstraint(['scope', 'name'], ['dids.scope', 'dids.name'], name='LOAD_INJECTION_DATASETS_SCOPE_NAME_FK'),
+                   ForeignKeyConstraint(['src_rse_id'], ['rses.id'], name='LOAD_INJECTION_DATASETS_SRC_RSE_FK'),
+                   ForeignKeyConstraint(['dest_rse_id'], ['rses.id'], name='LOAD_INJECTION_DATASETS_DEST_RSE_FK'),
+                   Index('LOAD_INJECTION_DATASETS_SCOPE_NAME_IDX', 'scope', 'name'),
+                   Index('LOAD_INJECTION_DATASETS_SRC_RSE_DEST_RSE_IDX', 'src_rse_id', 'dest_rse_id'))
 
 
 class LoadInjectionPlans(BASE, ModelBase):
@@ -1760,9 +1760,7 @@ class LoadInjectionPlans(BASE, ModelBase):
     _table_args = (PrimaryKeyConstraint('src_rse_id', 'dest_rse_id', name='LOAD_INJECTION_PLANS_PK'),
                    ForeignKeyConstraint(['src_rse_id'], ['rses.id'], name='LOAD_INJECTION_PLANS_SRC_RSE_FK'),
                    ForeignKeyConstraint(['dest_rse_id'], ['rses.id'], name='LOAD_INJECTION_PLANS_DEST_RSE_FK'),
-                   Index('LOAD_INJECTION_PLANS_PLAN_IDX', 'plan_id'),
-                   Index('LOAD_INJECTION_PLANS_SRC_RSE_IDX', 'src_rse_id'),
-                   Index('LOAD_INJECTION_PLANS_DEST_RSE_IDX', 'dest_rse_id'))
+                   Index('LOAD_INJECTION_PLANS_PLAN_IDX', 'plan_id'))
 
 
 class LoadInjectionPlansHistory(BASE, ModelBase):
@@ -1789,8 +1787,7 @@ class LoadInjectionPlansHistory(BASE, ModelBase):
                    ForeignKeyConstraint(['src_rse_id'], ['rses.id'], name='LOAD_INJECTION_PLANS_HISTORY_SRC_RSE_FK'),
                    ForeignKeyConstraint(['dest_rse_id'], ['rses.id'], name='LOAD_INJECTION_PLANS_HISTORY_DEST_RSE_FK'),
                    Index('LOAD_INJECTION_PLANS_HISTORY_PLAN_IDX', 'plan_id'),
-                   Index('LOAD_INJECTION_PLANS_HISTORY_SRC_RSE_IDX', 'src_rse_id'),
-                   Index('LOAD_INJECTION_PLANS_HISTORY_DEST_RSE_IDX', 'dest_rse_id'))
+                   Index('LOAD_INJECTION_PLANS_HISTORY_RSE_IDX', 'src_rse_id', 'dest_rse_id'))
 
 
 def register_models(engine: Engine) -> None:
