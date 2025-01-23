@@ -1363,6 +1363,16 @@ class NoLoadInjectionPlanFound(RucioException):
         self.error_code = 116
 
 
+class DuplicateUniqueDatasetFound(RucioException):
+    """
+    Duplicate unique dataset.
+    """
+    def __init__(self, *args):
+        super(DuplicateUniqueDatasetFound, self).__init__(*args)
+        self._message = 'A duplicate unique dataset already exists.'
+        self.error_code = 114
+
+
 class NoUniqueDatasetFound(RucioException):
     """
     No unique datasets found.

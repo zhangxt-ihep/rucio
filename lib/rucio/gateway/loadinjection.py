@@ -13,10 +13,14 @@
 # limitations under the License.
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import rucio.gateway.permission
-from rucio.common.exception import AccessDenied, DuplicateLoadInjectionPlan
+from rucio.common.exception import (
+    AccessDenied,
+    DuplicateLoadInjectionPlan,
+    NoLoadInjectionPlanFound,
+)
 from rucio.common.utils import generate_uuid
 from rucio.core import load_injection
 from rucio.core.rse import get_rse_id, get_rse_name
@@ -84,12 +88,15 @@ def add_load_injection_plans(
                 % (new_plan["src_rse"], new_plan["dest_rse"])
             )
 
-    load_injection.add_injection_plans(injection_plans)
+    try:
+        load_injection.add_injection_plans(injection_plans)
+    except DuplicateLoadInjectionPlan:
+        raise
 
 
 @read_session
 def get_load_injection_plans(
-    issuer: str, vo: str, state: Optional[str] = None, *, session: "Session"
+    issuer: str, vo: str, *, session: "Session"
 ) -> list[dict[str, Any]]:
     """
     Get load injection plans.
@@ -113,18 +120,60 @@ def get_load_injection_plans(
             % (issuer, auth_result.message)
         )
 
-    result = load_injection.get_injection_plans(state=state)
+    try:
+        result = load_injection.get_injection_plans()
+    except NoLoadInjectionPlanFound:
+        raise
+    logging.debug("Getting load injection plans %s", _format_plans(result))
     return _format_plans(result)
 
 
+@read_session
+def get_load_injection_plan(
+    src_rse: str, dest_rse: str, issuer: str, vo: str, *, session: "Session"
+) -> dict[str, Any]:
+    """
+    Get load injection plan.
+
+    :param src_rse: The source RSE.
+    :param dest_rse: The destination RSE.
+    :param issuer: The issuer account.
+    :param vo: The VO to act on.
+    :param session: The database session in use.
+    """
+    kwargs = {"issuer": issuer}
+    auth_result = rucio.gateway.permission.has_permission(
+        issuer=issuer,
+        vo=vo,
+        action="get_load_injection_plans",
+        kwargs=kwargs,
+        session=session,
+    )
+    if not auth_result.allowed:
+        raise AccessDenied(
+            "Account %s can not get load injection plan. %s"
+            % (issuer, auth_result.message)
+        )
+
+    try:
+        src_rse_id = get_rse_id(src_rse)
+        dest_rse_id = get_rse_id(dest_rse)
+        result = load_injection.get_injection_plan(src_rse_id, dest_rse_id)
+    except NoLoadInjectionPlanFound:
+        raise
+    logging.debug("Getting load injection plan %s", _format_plans([result]))
+    return _format_plans(result)[0]
+
+
 @transactional_session
-def delete_load_injection_plans(
-    plan_ids: list[str], issuer: str, vo: str, *, session: "Session"
+def delete_load_injection_plan(
+    src_rse: str, dest_rse: str, issuer: str, vo: str, *, session: "Session"
 ) -> None:
     """
     Delete load injection plans.
 
-    :param plan_ids: List of plan IDs.
+    :param src_rse: The source RSE.
+    :param dest_rse: The destination RSE.
     :param issuer: The issuer account.
     :param vo: The VO to act on.
     :param session: The database session in use.
@@ -143,11 +192,12 @@ def delete_load_injection_plans(
             % (issuer, auth_result.message)
         )
 
-    plans = list()
-    for plan_id in plan_ids:
-        plan = {"plan_id": plan_id}
-        plans.append(plan)
-    load_injection.delete_injection_plans(plans)
+    src_rse_id = get_rse_id(src_rse)
+    dest_rse_id = get_rse_id(dest_rse)
+    try:
+        load_injection.delete_injection_plan(src_rse_id, dest_rse_id)
+    except NoLoadInjectionPlanFound:
+        raise
 
 
 def _format_plans(plans: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -158,9 +208,12 @@ def _format_plans(plans: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     :return: List of formatted plans.
     """
+    formatted_plans = list()
     for plan in plans:
-        plan["src_rse"] = get_rse_name(plan.pop("src_rse_id"))
-        plan["dest_rse"] = get_rse_name(plan.pop("dest_rse_id"))
-        plan.pop("created_at", None)
-        plan.pop("updated_at", None)
-    return plans
+        formatted_plan = plan.copy()
+        formatted_plan["src_rse"] = get_rse_name(formatted_plan.pop("src_rse_id"))
+        formatted_plan["dest_rse"] = get_rse_name(formatted_plan.pop("dest_rse_id"))
+        formatted_plan.pop("created_at", None)
+        formatted_plan.pop("updated_at", None)
+        formatted_plans.append(formatted_plan)
+    return formatted_plans

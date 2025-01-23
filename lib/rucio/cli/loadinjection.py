@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from argparse import SUPPRESS
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from rucio.client.richclient import get_cli_config
 from rucio.client.commands.command import get_client
 from rucio.client.commands.command_base import CommandBase
+from rucio.common.exception import NoLoadInjectionPlanFound
 
 if TYPE_CHECKING:
     from argparse import ArgumentParser
@@ -143,20 +143,20 @@ class LoadInjection(CommandBase):
 
     def usage_example(self) -> list[str]:
         return [
-            "$ rucio load-injection add --csv myfile.csv",
-            "$ rucio load-injection list",
-            "$ rucio load-injection info --plan-id PLAN_ID",
-            "$ rucio load-injection remove --plan-id PLAN_ID",
+            "$ rucio loadinjection add --csv CSV_FILE",
+            "$ rucio loadinjection list",
+            "$ rucio loadinjection info --src-rse SRC_RSE --dest-rse DEST_RSE",
+            "$ rucio loadinjection remove --src-rse SRC_RSE --dest-rse DEST_RSE",
         ]
 
     def list_namespace(self, parser: "ArgumentParser") -> None:
         parser.add_argument(
-            "--plan-id",
-            "--plan",
-            dest="plan_id",
+            "--state",
+            "--status",
+            dest="state",
             action="store",
             type=str,
-            help="Plan id to list.",
+            help="State of the plan, default is None.",
             required=False,
         )
         parser.add_argument(
@@ -179,15 +179,6 @@ class LoadInjection(CommandBase):
             help="Destination RSE name, default in None.",
             required=False,
         )
-        parser.add_argument(
-            "--state",
-            "--status",
-            dest="state",
-            action="store",
-            type=str,
-            help="State of the plan, default is None.",
-            required=False,
-        )
 
     def add_namespace(self, parser: "ArgumentParser") -> None:
         for parameter in plan_parameters:
@@ -195,24 +186,27 @@ class LoadInjection(CommandBase):
 
     def info_namespace(self, parser: "ArgumentParser") -> None:
         parser.add_argument(
-            "--plan-id",
-            "--plan",
-            dest="plan_id",
+            "--src-rse",
+            "--src",
+            dest="src_rse",
             action="store",
             type=str,
-            help="Plan id to get detailed infomation.",
-            required=True,
+            help="Source RSE name, default is None.",
+            required=False,
+        )
+        parser.add_argument(
+            "--dest-rse",
+            "--dest",
+            "--des",
+            "--dst",
+            dest="dest_rse",
+            action="store",
+            type=str,
+            help="Destination RSE name, default in None.",
+            required=False,
         )
 
     def remove_namespace(self, parser: "ArgumentParser") -> None:
-        parser.add_argument(
-            "--plan-id",
-            "--plan",
-            action="store",
-            type=str,
-            help="Plan id to remove.",
-            required=False,
-        )
         parser.add_argument(
             "--src-rse",
             "--src",
@@ -270,32 +264,33 @@ class LoadInjection(CommandBase):
                 return None
             plan = dict()
             for parameter in plan_parameters:
-                key = parameter["name_or_flags"][0].strip["-"]
+                key = parameter["name_or_flags"][0].strip("-").replace("-", "_")
                 plan[key] = getattr(self.args, key)
             plans.append(plan)
         else:
             plans = self._normalize_csv(self.args.csv)
             for plan in plans:
                 for parameter in plan_parameters:
-                    key = parameter["name_or_flags"][0].strip["-"]
+                    key = parameter["name_or_flags"][0].strip("-").replace("-", "_")
                     if key not in plan:
                         plan[key] = getattr(self.args, key)
 
-        client.add_load_injection_plans(plans)
+        if self.args.test:
+            pass
+        else:
+            client.add_load_injection_plans(plans)
 
     def list_(self) -> None:
         client = get_client(self.args, self.logger)
 
-        plans = client.list_load_injection_plan()
+        plans = client.list_load_injection_plans()
         filter = dict()
-        if self.args.plan_id:
-            filter["plan_id"] = self.args.plan_id
+        if self.args.state:
+            filter["state"] = self.args.state
         if self.args.src_rse:
             filter["src_rse"] = self.args.src_rse
         if self.args.dest_rse:
             filter["dest_rse"] = self.args.dest_rse
-        if self.args.state:
-            filter["state"] = self.args.state
 
         result = list()
         for plan in plans:
@@ -310,33 +305,26 @@ class LoadInjection(CommandBase):
             else:
                 result.append(plan)
 
+        if len(result) == 0:
+            raise NoLoadInjectionPlanFound()
         print(result)
 
     def info(self) -> None:
         client = get_client(self.args, self.logger)
 
-        result = client.info_load_injection_plan(self.args.plan_id)
+        result = client.info_load_injection_plan(self.args.src_rse, self.args.dest_rse)
 
-        print(result)
+        for i in result:
+            print(i)
 
     def remove(self) -> None:
         client = get_client(self.args, self.logger)
 
-        if self.args.plan_id:
-            client.remove_load_injection_plan(self.args.plan_id)
+        if not self.args.src_rse or not self.args.dest_rse:
+            self.logger.error('"--src-rse" and "--dest-src" are mandatory.')
+            return None
         else:
-            if not self.args.src_rse or not self.args.dest_rse:
-                self.logger.error(
-                    '"--src-rse" and "--dest-src" are mandatory if you don\'t use "--plan-id".'
-                )
-                return None
-            for plan in client.list_load_injection_plan():
-                if (
-                    plan["src_rse"] == self.args.src_rse
-                    and plan["dest_rse"] == self.args.dest_rse
-                ):
-                    client.remove_load_injection_plan(plan["plan_id"])
-                    break
+            client.remove_load_injection_plan(self.args.src_rse, self.args.dest_rse)
 
     def _normalize_csv(self, csvfile: str) -> list[dict[str, Any]]:
         """Normalize the csv file."""
@@ -365,3 +353,11 @@ class LoadInjection(CommandBase):
                 plans.append(plan)
 
         return plans
+
+    def _format_plan_list(self, plans: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Format plan list to user readable format."""
+        return plans
+
+    def _format_plan_info(self, plan: dict[str, Any]) -> dict[str, Any]:
+        """Format plan info to user readable format."""
+        return plan

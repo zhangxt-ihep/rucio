@@ -73,7 +73,7 @@ def plan_submitter(
     # Update plan state to 'injecting'.
     update_injection_plan_state(
         src_rse_id=src_rse_id,
-        dest_rse_id=src_rse_id,
+        dest_rse_id=dest_rse_id,
         new_state=LoadInjectionState.INJECTING,
     )
 
@@ -82,10 +82,7 @@ def plan_submitter(
     while True:
         # If plan is killed or daemon is gracefully stopped, we need to remove all rules before we stop the loop.
         if (
-            get_injection_plan_state(
-                src_rse_id=src_rse_id,
-                dest_rse_id=dest_rse_id,
-            )
+            get_injection_plan_state(src_rse_id, dest_rse_id)
             == LoadInjectionState.KILLED
             or graceful_stop.is_set()
         ):
