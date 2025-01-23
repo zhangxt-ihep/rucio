@@ -1722,7 +1722,7 @@ class FollowEvent(BASE, ModelBase):
 
 class LoadInjectionDatasets(BASE, ModelBase):
     """Unique datasets that exist in a specific RSE pair"""
-    __tablename__ = 'unique_rse_pair_datasets'
+    __tablename__ = 'load_injection_datasets'
     scope: Mapped[InternalScope] = mapped_column(InternalScopeString(common_schema.get_schema_value('SCOPE_LENGTH')))
     name: Mapped[str] = mapped_column(String(common_schema.get_schema_value('NAME_LENGTH')))
     bytes: Mapped[Optional[int]] = mapped_column(BigInteger)

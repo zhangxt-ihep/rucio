@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from json import dumps
-
-from flask import Flask, request
+from flask import Flask, request, Response
+from typing import Union
 
 from rucio.common.exception import (
     AccessDenied,
@@ -25,9 +24,10 @@ from rucio.common.exception import (
 from rucio.gateway.loadinjection import (
     add_load_injection_plans,
     get_load_injection_plans,
-    delete_load_injection_plans,
+    get_load_injection_plan,
+    delete_load_injection_plan,
 )
-from rucio.common.utils import APIEncoder, render_json
+from rucio.common.utils import render_json
 from rucio.web.rest.flaskapi.authenticated_bp import AuthenticatedBlueprint
 from rucio.web.rest.flaskapi.v1.common import (
     ErrorHandlingMethodView,
@@ -143,7 +143,7 @@ class Plans(ErrorHandlingMethodView):
         return "Created", 201
 
     @check_accept_header_wrapper_flask(["application/x-json-stream"])
-    def get(self, plan_id=None):
+    def get(self, src_rse=None, dest_rse=None) -> Union[str, Response]:
         """
         ---
         summary: Get load injection plans bulk in all or in specified states
@@ -151,12 +151,18 @@ class Plans(ErrorHandlingMethodView):
         tags:
           - Load Injection Plans
         parameters:
-        - name: plan_id
-          in: query
-          description: ID of the injection plan
-          schema:
-            type: string
-          required: false
+          - name: src_rse
+            in: query
+            description: Source RSE name
+            schema:
+              type: string
+            required: false
+          - name: dest_rse
+            in: query
+            description: Destination RSE name
+            schema:
+              type: string
+            required: false
         responses:
           200:
             description: OK
@@ -222,12 +228,13 @@ class Plans(ErrorHandlingMethodView):
             description: Not acceptable
         """
         try:
-            if plan_id:
+            if src_rse and dest_rse:
                 return render_json(
-                    **get_load_injection_plans(
-                        issuer=request.environ.get("issue"),
+                    **get_load_injection_plan(
+                        src_rse=src_rse,
+                        dest_rse=dest_rse,
+                        issuer=request.environ.get("issuer"),
                         vo=request.environ.get("vo"),
-                        plan_id=plan_id,
                     )
                 )
             else:
@@ -246,27 +253,26 @@ class Plans(ErrorHandlingMethodView):
         except Exception as error:
             return generate_http_error_flask(406, error)
 
-    def delete(self, plan_id):
+    def delete(self, src_rse, dest_rse):
         """
         ---
         summary: Delete load injection plans in bulk
         description: Delete load injection plans in bulk
         tags:
           - Load Injection Plans
-        requestBody:
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  description: One injection plan to delete.
-                  type: object
-                  required:
-                    - plan_id
-                  properties:
-                    plan_id:
-                      description: Plan ID of the injection plan to delete.
-                      type: string
+        parameters:
+          - name: src_rse
+            in: query
+            description: Source RSE name
+            schema:
+              type: string
+            required: false
+          - name: dest_rse
+            in: query
+            description: Destination RSE name
+            schema:
+              type: string
+            required: false
         responses:
           200:
             description: OK
@@ -276,8 +282,9 @@ class Plans(ErrorHandlingMethodView):
             description: Not found
         """
         try:
-            delete_load_injection_plans(
-                plan_ids=[plan_id],
+            delete_load_injection_plan(
+                src_rse=src_rse,
+                dest_rse=dest_rse,
                 issuer=request.environ.get("issuer"),
                 vo=request.environ.get("vo"),
             )
@@ -295,10 +302,11 @@ def blueprint(with_doc: bool = False) -> AuthenticatedBlueprint:
 
     plans_view = Plans.as_view("plans")
     bp.add_url_rule("", view_func=plans_view, methods=["post", "get"])
-    bp.add_url_rule("/<plan_id>", view_func=plans_view, methods=["get", "delete"])
+    bp.add_url_rule(
+        "/<src_rse>/<dest_rse>", view_func=plans_view, methods=["get", "delete"]
+    )
     # bulkplans_view = Plans.as_view("Bulkplans")
-    # bp.add_url_rule("/get", view_func=bulkplans_view, method=["post"])
-    # bp.add_url_rule("/delete", view_func=bulkplans_view, method=["delete"])
+    # bp.add_url_rule("/bulkdelete", view_func=bulkplans_view, method=["post"])
 
     bp.after_request(response_headers)
     return bp

@@ -83,6 +83,38 @@ def scan_unique_rse_pair_datasets(
 
 
 @read_session
+def get_unique_rse_pair_dataset(
+    src_rse_id: str, dest_rse_id: str, scope: str, name: str, *, session: "Session"
+) -> "Mapping[str, Any]":
+    """
+    Read the cached unique dataset for a given RSE pair from unique_datasets table.
+
+    :param src_rse_id: The src RSE id.
+    :param dest_rse_id: The dest RSE id.
+    :param scope: The dataset scope.
+    :param name: The dataset name.
+    :param session: The database session in use.
+    :returns: A dictionary with the unique dataset for the given RSE pair.
+    """
+
+    try:
+        stmt = select(models.LoadInjectionDatasets).where(
+            and_(
+                models.LoadInjectionDatasets.scope == scope,
+                models.LoadInjectionDatasets.name == name,
+                models.LoadInjectionDatasets.src_rse_id == src_rse_id,
+                models.LoadInjectionDatasets.dest_rse_id == dest_rse_id,
+            )
+        )
+        query_result = session.execute(stmt).scalar_one()
+        return query_result.to_dict()
+    except MultipleResultsFound as error:
+        raise exception.DuplicateUniqueDatasetFound(error.args)
+    except NoResultFound as error:
+        raise exception.NoUniqueDatasetFound(error.args)
+
+
+@read_session
 def get_unique_rse_pair_datasets(
     src_rse_id: str, dest_rse_id: str, *, session: "Session"
 ) -> "Sequence[Mapping[str, Any]]":
@@ -266,9 +298,32 @@ def validate_unique_rse_pair_dataset(
 
 
 @read_session
-def get_injection_plans(
-    state: "Optional[str]" = None, *, session: "Session"
-) -> "Sequence[Mapping[str, Any]]":
+def get_injection_plan(
+    src_rse_id: str, dest_rse_id: str, *, session: "Session"
+) -> "Mapping[str, Any]":
+    """
+    Get an injection plan from the database.
+
+    :param src_rse_id: The source RSE ID.
+    :param dest_rse_id: The destination RSE ID.
+    :param session: The database session in use.
+    :returns: An injection plan.
+    """
+    try:
+        stmt = select(models.LoadInjectionPlans).where(
+            and_(
+                models.LoadInjectionPlans.src_rse_id == src_rse_id,
+                models.LoadInjectionPlans.dest_rse_id == dest_rse_id,
+            )
+        )
+        query_result = session.execute(stmt).scalar_one()
+        return query_result.to_dict()
+    except NoResultFound as error:
+        raise exception.NoLoadInjectionPlanFound(error.args)
+
+
+@read_session
+def get_injection_plans(*, session: "Session") -> "Sequence[Mapping[str, Any]]":
     """
     Get injection plans from the database.
 
@@ -277,12 +332,10 @@ def get_injection_plans(
     """
     try:
         stmt = select(models.LoadInjectionPlans)
-        if state:
-            stmt = stmt.where(models.LoadInjectionPlans.state == state)
         query_result = session.execute(stmt).scalars().all()
+        return [plan.to_dict() for plan in query_result]
     except NoResultFound as error:
         raise exception.NoLoadInjectionPlanFound(error.args)
-    return [plan.to_dict() for plan in query_result]
 
 
 @transactional_session
@@ -301,7 +354,7 @@ def add_injection_plan(
     rule_lifetime: int = 3600,
     comments: Optional[str] = None,
     dry_run: bool = False,
-    state: Optional["Mapping[str, Any]"] = None,
+    state: constants.LoadInjectionState = constants.LoadInjectionState.WAITING,
     *,
     session: "Session"
 ) -> None:
@@ -351,20 +404,20 @@ def add_injection_plan(
 
 @transactional_session
 def add_injection_plans(
-    injection_plans: "Sequence[Mapping[str, Any]]", *, session: "Session"
+    plans: "Sequence[Mapping[str, Any]]", *, session: "Session"
 ) -> None:
     """
     Bulk add injection plans in the database.
 
-    :param injection_plans: The list of injection plans to add.
+    :param plans: The list of injection plans to add.
     :param session: The database session in use.
     """
     try:
-        for plan in injection_plans:
+        for plan in plans:
             new_plan = models.LoadInjectionPlans(
                 plan_id=plan["plan_id"],
-                dest_rse_id=plan["dest_rse_id"],
                 src_rse_id=plan["src_rse_id"],
+                dest_rse_id=plan["dest_rse_id"],
                 inject_rate=plan["inject_rate"],
                 state=plan["state"],
                 interval=plan["interval"],
@@ -392,15 +445,15 @@ def add_injection_plan_history(
     inject_rate: int,
     start_time: datetime.datetime,
     end_time: datetime.datetime,
-    comments: Optional[str] = None,
-    interval: int = 900,
-    fudge: float = 0.0,
-    max_injection: float = 0.2,
-    expiration_delay: int = 1800,
-    rule_lifetime: int = 3600,
-    big_first: bool = False,
-    dry_run: bool = False,
-    state: Optional["Mapping[str, Any]"] = None,
+    comments: Optional[str],
+    interval: int,
+    fudge: float,
+    max_injection: float,
+    expiration_delay: int,
+    rule_lifetime: int,
+    big_first: bool,
+    dry_run: bool,
+    state: constants.LoadInjectionState,
     *,
     session: "Session"
 ) -> None:
@@ -448,19 +501,20 @@ def add_injection_plan_history(
 
 @transactional_session
 def add_injection_plans_history(
-    injection_plans: "Sequence[Mapping[str, Any]]", *, session: "Session"
+    plans: "Sequence[Mapping[str, Any]]", *, session: "Session"
 ) -> None:
     """
     Bulk add history injection plans in the database.
 
-    :param injection_plans: The list of injection plans to add.
+    :param _plans: The list of injection plans to add.
     :param session: The database session in use.
     """
     try:
-        for plan in injection_plans:
+        for plan in plans:
             new_plan = models.LoadInjectionPlansHistory(
-                dest_rse_id=plan["dest_rse_id"],
+                plan_id=plan["plan_id"],
                 src_rse_id=plan["src_rse_id"],
+                dest_rse_id=plan["dest_rse_id"],
                 inject_rate=plan["inject_rate"],
                 state=plan["state"],
                 interval=plan["interval"],
@@ -478,6 +532,47 @@ def add_injection_plans_history(
         session.flush()
     except IntegrityError as error:
         raise exception.DuplicateLoadInjectionPlan(error.args)
+
+
+@read_session
+def get_injection_plan_history(
+    src_rse_id: str, dest_rse_id: str, *, session: "Session"
+) -> "Mapping[str,Any]":
+    """
+    Get one injection plan history from the database.
+
+    :param src_rse_id: The source RSE ID.
+    :param dest_rse_id: The destination RSE ID.
+    :param session: The database session in use.
+    :returns: A injection history plan.
+    """
+    try:
+        stmt = select(models.LoadInjectionPlansHistory).where(
+            and_(
+                models.LoadInjectionPlansHistory.src_rse_id == src_rse_id,
+                models.LoadInjectionPlansHistory.dest_rse_id == dest_rse_id,
+            )
+        )
+        query_result = session.execute(stmt).scalar_one()
+        return query_result.to_dict()
+    except NoResultFound as error:
+        raise exception.NoLoadInjectionPlanFound(error.args)
+
+
+@read_session
+def get_injection_plans_history(*, session: "Session") -> "Sequence[Mapping[str, Any]]":
+    """
+    Get injection history plans from the database.
+
+    :param session: The database session in use.
+    :returns: A list of injection history plans.
+    """
+    try:
+        stmt = select(models.LoadInjectionPlansHistory)
+        query_result = session.execute(stmt).scalars().all()
+        return [plan.to_dict() for plan in query_result]
+    except NoResultFound as error:
+        raise exception.NoLoadInjectionPlanFound(error.args)
 
 
 @transactional_session
@@ -503,42 +598,33 @@ def delete_injection_plan(
 
 
 @transactional_session
-def delete_injection_plans(
-    injection_plans: "Sequence[Mapping[str, Any]]", *, session: "Session"
-) -> None:
+def delete_injection_plans(plans: list[dict[str, Any]], *, session: "Session") -> None:
     """
     Bulk delete injection plans from the database.
 
-    :param injection_plans: The list of injection plans to delete.
+    :param plans: The list of injection plans to delete.
     :param session: The database session in use.
     """
     try:
-        for plan in injection_plans:
-            if "dest_rse_id" in plan and "src_rse_id" in plan and not "plan_id" in plan:
-                stmt = delete(models.LoadInjectionPlans).where(
-                    and_(
-                        models.LoadInjectionPlans.dest_rse_id == plan["dest_rse_id"],
-                        models.LoadInjectionPlans.src_rse_id == plan["src_rse_id"],
-                    )
+        # Move to history firstly
+        deleted_plans = list()
+        for plan in plans:
+            deleted_plan = get_injection_plan(
+                src_rse_id=plan["src_rse_id"],
+                dest_rse_id=plan["dest_rse_id"],
+                session=session,
+            )
+            deleted_plans.append(deleted_plan)
+        add_injection_plans_history(deleted_plans, session=session)
+
+        # Then delete
+        for plan in plans:
+            stmt = delete(models.LoadInjectionPlans).where(
+                and_(
+                    models.LoadInjectionPlans.dest_rse_id == plan["dest_rse_id"],
+                    models.LoadInjectionPlans.src_rse_id == plan["src_rse_id"],
                 )
-            elif (
-                "plan_id" in plan
-                and not "dest_rse_id" in plan
-                and not "src_rse_id" in plan
-            ):
-                stmt = delete(models.LoadInjectionPlans).where(
-                    models.LoadInjectionPlans.plan_id == plan["plan_id"]
-                )
-            elif "dest_rse_id" in plan and "src_rse_id" in plan and "plan_id" in plan:
-                stmt = delete(models.LoadInjectionPlans).where(
-                    and_(
-                        models.LoadInjectionPlans.dest_rse_id == plan["dest_rse_id"],
-                        models.LoadInjectionPlans.src_rse_id == plan["src_rse_id"],
-                        models.LoadInjectionPlans.plan_id == plan["plan_id"],
-                    )
-                )
-            else:
-                raise exception.InputValidationError()
+            )
             session.execute(stmt)
     except NoResultFound as error:
         raise exception.NoLoadInjectionPlanFound(error.args)

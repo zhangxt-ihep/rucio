@@ -20,7 +20,7 @@ from rucio.client.baseclient import BaseClient, choice
 from rucio.common.utils import build_url, render_json
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Mapping, Sequence, Iterator
 
 
 class LoadInjectionClient(BaseClient):
@@ -31,24 +31,24 @@ class LoadInjectionClient(BaseClient):
     def add_load_injection_plan(
         self,
         src_rse: str,
-        dst_rse: str,
+        dest_rse: str,
         inject_rate: int,
         start_time: str,
         end_time: str,
+        interval: int,
         comments: Optional[str] = None,
-        interval: Optional[int] = None,
-        fudge: Optional[float] = None,
-        max_injection: Optional[float] = None,
-        expiration_delay: Optional[int] = None,
-        rule_lifetime: Optional[int] = None,
-        big_first: Optional[bool] = None,
-        dry_run: Optional[bool] = None,
+        fudge: float = 0.0,
+        max_injection: float = 0.2,
+        expiration_delay: int = 1800,
+        rule_lifetime: int = 3600,
+        big_first: bool = False,
+        dry_run: bool = False,
     ) -> bool:
         """
         Add a load injection plan.
 
         :param src_rse: The source RSE.
-        :param dst_rse: The destination RSE.
+        :param dest_rse: The destination RSE.
         :param inject_rate: The injection rate, in MB/s.
         :param start_time: The start time of the injection plan.
         :param end_time: The end time of the injection plan.
@@ -66,7 +66,7 @@ class LoadInjectionClient(BaseClient):
 
         new_plan = {
             "src_rse": src_rse,
-            "dst_rse": dst_rse,
+            "dest_rse": dest_rse,
             "inject_rate": inject_rate,
             "start_time": start_time,
             "end_time": end_time,
@@ -100,7 +100,7 @@ class LoadInjectionClient(BaseClient):
             )
             raise exc_cls(exc_msg)
 
-    def list_load_injection_plan(self) -> "Sequence[Mapping[str, Any]]":
+    def list_load_injection_plans(self) -> "Iterator[Mapping[str, Any]]":
         """
         List all load injection plans.
 
@@ -108,46 +108,50 @@ class LoadInjectionClient(BaseClient):
         """
         path = "/".join([self.LOADINJECTION_BASEURL])
         url = build_url(choice(self.list_hosts), path=path)
-        r = self._send_request(url, type_="GET")
+        r = self._send_request(url, type_="GET", stream=True)
         if r.status_code == codes.ok:
-            return r.json()
+            return self._load_json_data(r)
         else:
             exc_cls, exc_msg = self._get_exception(
                 headers=r.headers, status_code=r.status_code, data=r.content
             )
             raise exc_cls(exc_msg)
 
-    def info_load_injection_plan(self, plan_id: str) -> "Mapping[str, Any]":
+    def info_load_injection_plan(
+        self, src_rse: str, dest_rse: str
+    ) -> "Iterator[Mapping[str, Any]]":
         """
         Get information about a load injection plan.
 
-        :param plan_id: The ID of the load injection plan.
+        :param src_rse: The source RSE.
+        :param dest_rse: The destination RSE.
 
         :returns: A dictionary containing the information about the load injection plan.
         """
-        path = "/".join([self.LOADINJECTION_BASEURL, plan_id])
+        path = "/".join([self.LOADINJECTION_BASEURL, src_rse, dest_rse])
         url = build_url(choice(self.list_hosts), path=path)
         r = self._send_request(url, type_="GET")
         if r.status_code == codes.ok:
-            return r.json()
+            return self._load_json_data(r)
         else:
             exc_cls, exc_msg = self._get_exception(
                 headers=r.headers, status_code=r.status_code, data=r.content
             )
             raise exc_cls(exc_msg)
 
-    def remove_load_injection_plan(self, plan_id: str) -> bool:
+    def remove_load_injection_plan(self, src_rse: str, dest_rse: str) -> bool:
         """
         Remove load injection plans.
 
-        :param plan_id: The ID of the load injection plan to remove.
+        :param src_rse: The source RSE.
+        :param dest_rse: The destination RSE.
 
         :returns: True if the load injection plan was removed successfully, False otherwise.
         """
-        path = "/".join([self.LOADINJECTION_BASEURL, plan_id])
+        path = "/".join([self.LOADINJECTION_BASEURL, src_rse, dest_rse])
         url = build_url(choice(self.list_hosts), path=path)
-        r = self._send_request(url, type_="DELETE")
-        if r.status_code == codes.no_content:
+        r = self._send_request(url, type_="DEL")
+        if r.status_code == codes.ok:
             return True
         else:
             exc_cls, exc_msg = self._get_exception(
