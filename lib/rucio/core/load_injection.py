@@ -332,8 +332,6 @@ def get_injection_plans(*, session: "Session") -> "Sequence[Mapping[str, Any]]":
     """
     try:
         stmt = select(models.LoadInjectionPlans)
-        if state:
-            stmt = stmt.where(models.LoadInjectionPlans.state == state)
         query_result = session.execute(stmt).scalars().all()
         return [plan.to_dict() for plan in query_result]
     except NoResultFound as error:
