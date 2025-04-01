@@ -1370,7 +1370,7 @@ class DuplicateUniqueDatasetFound(RucioException):
     def __init__(self, *args):
         super(DuplicateUniqueDatasetFound, self).__init__(*args)
         self._message = 'A duplicate unique dataset already exists.'
-        self.error_code = 114
+        self.error_code = 117
 
 
 class NoUniqueDatasetFound(RucioException):
@@ -1380,5 +1380,5 @@ class NoUniqueDatasetFound(RucioException):
     def __init__(self, *args):
         super(NoUniqueDatasetFound, self).__init__(*args)
         self._message = 'No unique datasets found.'
-        self.error_code = 117
+        self.error_code = 118
 
